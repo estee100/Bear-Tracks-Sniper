@@ -1,8 +1,16 @@
-<<<<<<< HEAD
 # BearTracks Sniper
 
-Watches a full course in BearTracks Schedule Builder and enrolls you automatically when a seat opens.
-Optionally pings you on Discord.
+Courses at universities tend to fill up before students get the chance to enroll. BearTracks Sniper
+watches a full course in BearTracks Schedule Builder and enrolls you automatically when a seat opens.
+Add the course to your Schedule Builder and the bot takes care of the rest. It can also ping you
+on Discord.
+
+## Disclaimer
+
+The bot needs your student login, which it stores in a local `.env` file. Even though that file
+stays on your computer, storing a password this way is still a risk. The bot was made for
+educational purposes and for my own personal use. Use it at your own risk; I take no
+responsibility for anything that happens.
 
 ## Before you start
 
@@ -33,9 +41,9 @@ Press **Ctrl+C** in the terminal to stop.
 
 Every setting is in one file, `.env`, in this folder. It's created on the first run from
 `.env.example`, and each line has a comment explaining it. That includes your login, the course,
-the term, Discord alerts, and how often it checks. Open it in any text editor to change things.
-If you empty a required value, the sniper asks for it again next time. Delete the whole file to
-start setup over.
+the term, Discord alerts, and how often it checks. Open it in any text editor to change things,
+then restart the sniper. If you empty a required value, the sniper asks for it again next time.
+Delete the whole file to start setup over.
 
 `.env` holds your password in plain text, so **never send that file to anyone.**
 Send the folder without it, or share the GitHub link instead.
@@ -45,14 +53,3 @@ Send the folder without it, or share the GitHub link instead.
 In a Discord server you own: **Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL**.
 To get pinged, also give it your user ID: turn on **Settings → Advanced → Developer Mode**,
 then right-click your name and choose **Copy User ID**.
-=======
-# Bear-Tracks-Sniper
-Welcome to Bear Tracks Sniper. 
-
-Nowadays, courses at universities tend to fill up before a student has the opportunity to enroll. With the automatic enrollment bot, students will have a tool to automate their enrollment process.
-
-A student just has to add their desired courses in their schedule builder and the bot will take care of everything else. When a course is full, the bot will continually monitor the status of that course until it becomes open. When the course is open, it will automatically enroll the student in the course.
-
-Disclaimer
-The bot requires a user to provide their student information in a local .env file. Although the file is local, this is still be unsafe. In addition, the bot was made for both education purposes and for my own personal use. Therefore, before using the bot, please understand that you are using it at your own risk. If anything occurs, I take no responsibility.
->>>>>>> 7fc2b615609c5c5277872b97a5d1b449c02f4578
