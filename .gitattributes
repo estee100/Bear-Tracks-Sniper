@@ -1,2 +1,3 @@
-*.bat text eol=crlf
+# Stored byte-for-byte so run.bat keeps CRLF even in GitHub ZIP downloads
+*.bat -text
 *.sh text eol=lf
