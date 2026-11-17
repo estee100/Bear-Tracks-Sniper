@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv, set_key, unset_key
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
@@ -32,7 +32,7 @@ TERM_LINKS = "a[href^='javascript:UU.caseTermContinue(']"
 QUESTIONS = [
     ("UOFA_USERNAME", "Your CCID (the part before @ualberta.ca)", {}),
     ("UOFA_PASSWORD", "Your CCID password (hidden as you type)", {"secret": True}),
-    ("COURSE_IDENTIFIER", "Course to watch, as shown in Schedule Builder (e.g. INT D 249)", {}),
+    ("COURSES", "Courses to watch, as shown in Schedule Builder, separated by commas (e.g. INT D 249, CMPUT 301)", {}),
     ("DISCORD_WEBHOOK_URL", "Discord webhook URL for alerts (optional, press Enter to skip)", {"required": False}),
     ("DISCORD_USER_ID", "Your Discord user ID so alerts ping you (optional, press Enter to skip)", {"required": False}),
 ]
@@ -75,16 +75,26 @@ def load_config():
         print("First-time setup. Answers are saved to .env in this folder, along with every other setting.\n")
     load_dotenv(ENV_PATH)
 
+    # Older .env files had a single COURSE_IDENTIFIER; move it over so nobody has to retype it
+    if not os.getenv("COURSES") and os.getenv("COURSE_IDENTIFIER"):
+        os.environ["COURSES"] = os.environ["COURSE_IDENTIFIER"]
+        set_key(ENV_PATH, "COURSES", os.environ["COURSES"])
+        unset_key(ENV_PATH, "COURSE_IDENTIFIER")
+
     for key, prompt, options in QUESTIONS:
         if should_ask(key, options.get("required", True), first_run):
             value = ask(prompt, **options)
             set_key(ENV_PATH, key, value)
             os.environ[key] = value
 
+    courses = [course.strip() for course in os.environ["COURSES"].split(",") if course.strip()]
+    if not courses:
+        raise SystemExit("COURSES in .env is empty. Add at least one course, e.g. COURSES='INT D 249'.")
+
     return {
         "username": os.environ["UOFA_USERNAME"],
         "password": os.environ["UOFA_PASSWORD"],
-        "course": os.environ["COURSE_IDENTIFIER"],
+        "courses": courses,
         "webhook": os.getenv("DISCORD_WEBHOOK_URL", ""),
         "discord_user_id": os.getenv("DISCORD_USER_ID", ""),
         "check_interval": int_setting("CHECK_INTERVAL_SECONDS", 30),
@@ -188,6 +198,13 @@ def find_seat_span(page, course):
     return seat_span
 
 
+def reopen_schedule_builder(stale_page, config):
+    """Go through login and Schedule Builder again from whatever page we're stuck on, then close that page."""
+    schedule_builder_page = open_schedule_builder(stale_page, config)
+    stale_page.close()
+    return schedule_builder_page
+
+
 def enroll(page):
     page.locator("text=Get this Schedule").click()
 
@@ -202,7 +219,13 @@ def enroll(page):
 
 
 def launch_browser(p):
-    options = {"user_data_dir": str(PROFILE_DIR), "headless": False}
+    options = {
+        "user_data_dir": str(PROFILE_DIR),
+        "headless": False,
+        "args": ["--start-maximized"],
+        # Without this Playwright pins the page to 1280x720 even when the window is maximized
+        "no_viewport": True,
+    }
     try:
         return p.chromium.launch_persistent_context(channel="chrome", **options)
     except PlaywrightError:
@@ -211,74 +234,93 @@ def launch_browser(p):
 
 
 def watch_and_enroll(config):
-    course = config["course"]
+    remaining = list(config["courses"])
     with sync_playwright() as p:
         context = launch_browser(p)
         # BearTracks can be very slow, so never give up waiting on a page
         context.set_default_timeout(0)
 
-        start_page = context.pages[0] if context.pages else context.new_page()
-        schedule_builder_page = open_schedule_builder(start_page, config)
-        start_page.close()
-        seat_span = find_seat_span(schedule_builder_page, course)
-
-        previous_value = None
+        page = context.pages[0] if context.pages else context.new_page()
+        seat_spans = {}
+        previous_values = {}
         consecutive_login_failures = 0
+        # Set whenever we're not sure the tab is still on Schedule Builder: at startup, after the
+        # session expires, after enrolling, and after unexpected errors
+        needs_reopen = True
+        started = False
 
-        notify(config, f"BearTracks Sniper started — watching {course} for an opening.")
-        while True:
+        while remaining:
+            if needs_reopen:
+                try:
+                    page = reopen_schedule_builder(page, config)
+                    seat_spans = {course: find_seat_span(page, course) for course in remaining}
+                    needs_reopen = False
+                    consecutive_login_failures = 0
+                except Exception as relogin_error:
+                    consecutive_login_failures += 1
+                    print(f"Getting back to Schedule Builder failed (attempt {consecutive_login_failures}): {relogin_error}")
+                    if consecutive_login_failures == config["login_failure_threshold"]:
+                        notify(
+                            config,
+                            f"Login has failed {consecutive_login_failures} times in a row — something may be "
+                            f"wrong (site changed, bad credentials, etc). Still retrying automatically, "
+                            f"but you may want to check.",
+                        )
+                    time.sleep(config["check_interval"])
+                    continue
+
+                if not started:
+                    notify(config, f"BearTracks Sniper started — watching {', '.join(remaining)} for an opening.")
+                    started = True
+
             try:
-                schedule_builder_page.reload(wait_until="networkidle")
+                page.reload(wait_until="networkidle")
 
                 # Check if we got bounced to a login page instead of Schedule Builder
-                if schedule_builder_page.locator("#username").count() > 0:
-                    notify(config, f"Session expired while watching {course} — logging back in automatically.")
+                if page.locator("#username").count() > 0:
+                    notify(config, "Session expired — logging back in automatically.")
+                    needs_reopen = True
+                    continue
+
+                for course in list(remaining):
+                    seat_span = seat_spans[course]
+                    seat_span.wait_for(timeout=120_000)
+                    seat_span.scroll_into_view_if_needed()
+
+                    seat_text = seat_span.inner_text().strip()
+                    print(f"{time.strftime('%H:%M:%S')}  {course}: {seat_text}")
                     try:
-                        stale_page = schedule_builder_page
-                        schedule_builder_page = open_schedule_builder(stale_page, config)
-                        stale_page.close()
-                        seat_span = find_seat_span(schedule_builder_page, course)
-                        consecutive_login_failures = 0
-                        notify(config, "Logged back in — resuming the watch.")
-                    except Exception as relogin_error:
-                        consecutive_login_failures += 1
-                        print(f"Relogin failed (attempt {consecutive_login_failures}): {relogin_error}")
-                        if consecutive_login_failures == config["login_failure_threshold"]:
-                            notify(
-                                config,
-                                f"Login has failed {consecutive_login_failures} times in a row while watching "
-                                f"{course} — something may be wrong (site changed, bad credentials, etc). "
-                                f"Still retrying automatically, but you may want to check.",
-                            )
-                        time.sleep(config["check_interval"])
+                        first_number = int(seat_text.split("/")[0].strip())
+                    except ValueError:
+                        print(f"  Couldn't read a seat count for {course}, skipping it this round.")
                         continue
 
-                seat_span.wait_for()
-                seat_span.scroll_into_view_if_needed()
-
-                seat_text = seat_span.inner_text().strip()
-                print(f"{time.strftime('%H:%M:%S')}  {course}: {seat_text}")
-
-                first_number = int(seat_text.split("/")[0].strip())
-
-                if previous_value is not None and first_number < previous_value:
-                    notify(config, f"Seat opened in {course} ({seat_text}) — enrolling now.")
-                    enroll(schedule_builder_page)
-                    notify(config, f"Submitted enrollment for {course}. Check BearTracks to confirm it went through.")
-                    input("\nPress Enter to close the browser...")
-                    return
-
-                previous_value = first_number
+                    previous_value = previous_values.get(course)
+                    previous_values[course] = first_number
+                    if previous_value is not None and first_number < previous_value:
+                        notify(config, f"Seat opened in {course} ({seat_text}) — enrolling now.")
+                        enroll(page)
+                        notify(config, f"Submitted enrollment for {course}. Check BearTracks to confirm it went through.")
+                        remaining.remove(course)
+                        if remaining:
+                            notify(config, f"Still watching {', '.join(remaining)}.")
+                        # Enrolling leaves Schedule Builder, so the other courses' readings wait for the next round
+                        needs_reopen = True
+                        break
 
             except Exception as e:
                 print(f"Error during check, will retry: {e}")
+                needs_reopen = True
 
             time.sleep(config["check_interval"])
+
+        notify(config, "Every watched course has been submitted for enrollment.")
+        input("\nPress Enter to close the browser...")
 
 
 def main():
     config = load_config()
-    print(f"\nOpening a browser to watch {config['course']}. Leave this window open; press Ctrl+C to stop.\n")
+    print(f"\nOpening a browser to watch {', '.join(config['courses'])}. Leave this window open; press Ctrl+C to stop.\n")
     try:
         watch_and_enroll(config)
     except KeyboardInterrupt:

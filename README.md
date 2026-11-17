@@ -16,9 +16,10 @@ responsibility for anything that happens.
 
 1. Install **Python 3.10+** from [python.org](https://www.python.org/downloads/).
    On Windows, tick **"Add python.exe to PATH"** in the installer.
-2. In BearTracks **Schedule Builder**, add the course you want to your courses and set up the
-   schedule so that clicking "Get this Schedule" would enroll you in the right section.
-   The sniper presses that button for you when a seat opens.
+2. In BearTracks **Schedule Builder**, add the courses you want and set up the schedule so that
+   clicking "Get this Schedule" would enroll you in the right sections. The sniper presses that
+   button for you when a seat opens. You can watch several courses at once, as long as they're
+   in the same term.
 
 ## Run it
 
@@ -28,7 +29,8 @@ responsibility for anything that happens.
 The first run installs everything it needs, then asks for:
 
 - your CCID and password
-- the course to watch, written the way Schedule Builder shows it (e.g. `INT D 249`)
+- the courses to watch, written the way Schedule Builder shows them, separated by commas
+  (e.g. `INT D 249, CMPUT 301`)
 - a Discord webhook URL (optional, press Enter to skip)
 
 A browser window opens and logs you in. Approve MFA there if asked. The first time, you also
